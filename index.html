@@ -3,24 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Public Health Document Digitizer</title>
+    <title>Manual Public Health Digitizer</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f6f9; color: #333; }
         .container { display: flex; gap: 20px; margin-top: 20px; }
-        #canvas-container { position: relative; border: 2px dashed #ccc; background: #fff; max-width: 60%; overflow: auto; }
+        #canvas-container { position: relative; border: 2px solid #2c3e50; background: #fff; max-width: 65%; max-height: 80vh; overflow: auto; }
         canvas { display: block; cursor: crosshair; }
-        .controls { flex: 1; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .btn { background: #0076d6; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .controls { flex: 1; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 15px; }
+        .btn { background: #0076d6; color: white; padding: 12px 15px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 16px; }
         .btn:hover { background: #00569d; }
-        #output { background: #eef2f7; padding: 15px; border-radius: 4px; border-left: 4px solid #0076d6; min-height: 50px; white-space: pre-wrap; font-family: monospace; }
-        .status { font-style: italic; color: #666; margin-top: 10px; }
+        .status { font-style: italic; color: #555; font-weight: bold; }
+        #preview-title { margin-bottom: 5px; font-weight: bold; color: #2c3e50; }
+        #previewCanvas { border: 1px solid #ccc; background: #fff; max-width: 100%; height: auto; display: block; }
+        #output { background: #eef2f7; padding: 15px; border-radius: 4px; border-left: 4px solid #0076d6; min-height: 60px; white-space: pre-wrap; font-family: monospace; font-size: 16px; margin-top: 10px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body>
 
-    <h2>📋 Public Health Inspection Digitizer (Prototype)</h2>
-    <p>Step 1: Upload a scanned form page (Image/PNG/JPG). Drag a box over the text you want to extract.</p>
+    <h2>📋 Public Health Manual Digitizer (Handwriting Optimizer)</h2>
+    <p>Upload your form. Click and drag a box closely around any handwritten text. Look at the isolated preview box, then click extract.</p>
     
     <input type="file" id="upload" accept="image/*" class="btn" style="background:#fff; color:#333; border:1px solid #ccc;">
     
@@ -30,11 +32,19 @@
         </div>
 
         <div class="controls">
-            <h3>Extracted Data</h3>
-            <button id="extractBtn" class="btn">Extract Text From Selected Box</button>
-            <div class="status" id="statusText">Status: Ready. Upload an image to begin.</div>
-            <h4>Results:</h4>
-            <div id="output">No text extracted yet.</div>
+            <div class="status" id="statusText">Status: Ready. Upload a form image to begin.</div>
+            
+            <div>
+                <div id="preview-title">AI View Preview (Background Removed):</div>
+                <canvas id="previewCanvas" width="150" height="50"></canvas>
+            </div>
+
+            <button id="extractBtn" class="btn">Extract Text From Box</button>
+            
+            <div>
+                <h4 style="margin-bottom: 5px;">Extracted Text Result:</h4>
+                <div id="output">No text extracted yet.</div>
+            </div>
         </div>
     </div>
 
@@ -42,6 +52,8 @@
         const upload = document.getElementById('upload');
         const canvas = document.getElementById('documentCanvas');
         const ctx = canvas.getContext('2d');
+        const previewCanvas = document.getElementById('previewCanvas');
+        const pCtx = previewCanvas.getContext('2d');
         const extractBtn = document.getElementById('extractBtn');
         const statusText = document.getElementById('statusText');
         const output = document.getElementById('output');
@@ -50,7 +62,7 @@
         let isDrawing = false;
         let startX, startY, endX, endY;
 
-        // 1. Handle Image Upload
+        // 1. Handle Document Upload
         upload.addEventListener('change', (e) => {
             const file = e.target.files[0];
             const reader = new FileReader();
@@ -59,17 +71,16 @@
                     canvas.width = img.width;
                     canvas.height = img.height;
                     ctx.drawImage(img, 0, 0);
-                    statusText.innerText = "Status: Image loaded. Click and drag a box around a field.";
+                    statusText.innerText = "Status: Form loaded. Drag a tight box around handwriting.";
                 };
                 img.src = event.target.result;
             };
             reader.readAsDataURL(file);
         });
 
-        // 2. Mouse Events to Draw Selection Box
+        // 2. Mouse Selection Events
         canvas.addEventListener('mousedown', (e) => {
             const rect = canvas.getBoundingClientRect();
-            // Scale mouse coordinates to match actual canvas resolution
             startX = (e.clientX - rect.left) * (canvas.width / rect.width);
             startY = (e.clientY - rect.top) * (canvas.height / rect.height);
             isDrawing = true;
@@ -81,69 +92,66 @@
             endX = (e.clientX - rect.left) * (canvas.width / rect.width);
             endY = (e.clientY - rect.top) * (canvas.height / rect.height);
             
-            // Redraw image and bounding box
+            // Redraw image and drawing box on primary canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0);
-            ctx.strokeStyle = '#0076d6';
-            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#e74c3c'; // High-vis red border
+            ctx.lineWidth = 3;
             ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+
+            // Dynamically update the AI preview box in real-time
+            updatePreview();
         });
 
         canvas.addEventListener('mouseup', () => { isDrawing = false; });
 
-       // 3. Extract Text from the Crop Area with High-Contrast Preprocessing
+        // 3. Process Selection & Strip Away Yellow Background
+        function updatePreview() {
+            const rectWidth = endX - startX;
+            const rectHeight = endY - startY;
+            if (Math.abs(rectWidth) < 5 || Math.abs(rectHeight) < 5) return;
+
+            previewCanvas.width = Math.abs(rectWidth);
+            previewCanvas.height = Math.abs(rectHeight);
+            
+            // Draw the cropped segment into the preview box
+            pCtx.drawImage(canvas, startX, startY, rectWidth, rectHeight, 0, 0, rectWidth, rectHeight);
+
+            // Apply Ink-Maximizer Binarization (Crushes the yellow background to pure white)
+            const imgData = pCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+            const data = imgData.data;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                let r = data[i], g = data[i+1], b = data[i+2];
+                let grayscale = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                
+                // If it's darker than 130 (the ink), turn it jet black. Otherwise, pure white page.
+                let threshold = 130; 
+                let binaryColor = (grayscale < threshold) ? 0 : 255;
+                
+                data[i] = data[i+1] = data[i+2] = binaryColor;
+            }
+            pCtx.putImageData(imgData, 0, 0);
+        }
+
+        // 4. Run AI OCR Engine on the Cleaned Preview Image
         extractBtn.addEventListener('click', async () => {
             if (!startX || !endX) {
                 alert("Please select a box on the document first!");
                 return;
             }
 
-            statusText.innerText = "Status: Enhancing handwriting and reading... (Please wait)";
-            output.innerText = "Processing...";
-
-            const rectWidth = endX - startX;
-            const rectHeight = endY - startY;
-
-            const cropCanvas = document.createElement('canvas');
-            cropCanvas.width = Math.abs(rectWidth);
-            cropCanvas.height = Math.abs(rectHeight);
-            const cropCtx = cropCanvas.getContext('2d');
-            
-            cropCtx.drawImage(canvas, startX, startY, rectWidth, rectHeight, 0, 0, rectWidth, rectHeight);
-
-            // --- IMAGE ENHANCEMENT FOR HANDWRITING & YELLOW PAGES ---
-            const imgData = cropCtx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
-            const data = imgData.data;
-            
-            for (let i = 0; i < data.length; i += 4) {
-                // Get the Red, Green, and Blue values of the pixel
-                let r = data[i];
-                let g = data[i+1];
-                let b = data[i+2];
-                
-                // Convert to Grayscale
-                let v = (0.2126 * r + 0.7152 * g + 0.0722 * b);
-                
-                // Thresholding: If the pixel is dark (the ink), force it to pure black.
-                // If it's light (the yellow page), force it to pure white.
-                let threshold = 120; // Adjust this number if it's too dark/light
-                let finalColor = (v < threshold) ? 0 : 255;
-                
-                data[i] = finalColor;     // Red
-                data[i+1] = finalColor;   // Green
-                data[i+2] = finalColor;   // Blue
-            }
-            cropCtx.putImageData(imgData, 0, 0);
-            // --------------------------------------------------------
+            statusText.innerText = "Status: AI is analyzing the cleaned handwriting... Please wait.";
+            output.innerText = "Reading ink data...";
 
             try {
-                // Tell Tesseract to look specifically for handwriting styles if possible
-                const result = await Tesseract.recognize(cropCanvas.toDataURL(), 'eng');
-                output.innerText = result.data.text.trim() || "[Still couldn't read it. The handwriting might be too faint.]";
+                // Pass the binarized data URL directly to the engine
+                const result = await Tesseract.recognize(previewCanvas.toDataURL(), 'eng');
+                output.innerText = result.data.text.trim() || "[Could not identify text. Try adjusting your box closer to the words.]";
                 statusText.innerText = "Status: Extraction complete!";
             } catch (error) {
                 console.error(error);
-                statusText.innerText = "Status: Error reading text.";
+                statusText.innerText = "Status: Extraction failed.";
                 output.innerText = "Error: " + error.message;
             }
         });
