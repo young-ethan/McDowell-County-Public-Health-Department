@@ -91,33 +91,55 @@
 
         canvas.addEventListener('mouseup', () => { isDrawing = false; });
 
-        // 3. Extract Text from the Crop Area using Tesseract.js
+       // 3. Extract Text from the Crop Area with High-Contrast Preprocessing
         extractBtn.addEventListener('click', async () => {
             if (!startX || !endX) {
                 alert("Please select a box on the document first!");
                 return;
             }
 
-            statusText.innerText = "Status: Analyzing box and reading text... (This takes a few seconds)";
-            output.innerText = "Reading...";
+            statusText.innerText = "Status: Enhancing handwriting and reading... (Please wait)";
+            output.innerText = "Processing...";
 
-            // Calculate width/height of the cropped area
             const rectWidth = endX - startX;
             const rectHeight = endY - startY;
 
-            // Create a mini-canvas just for the cropped area
             const cropCanvas = document.createElement('canvas');
             cropCanvas.width = Math.abs(rectWidth);
             cropCanvas.height = Math.abs(rectHeight);
             const cropCtx = cropCanvas.getContext('2d');
             
-            // Copy the selected pixels from main canvas to mini-canvas
             cropCtx.drawImage(canvas, startX, startY, rectWidth, rectHeight, 0, 0, rectWidth, rectHeight);
 
+            // --- IMAGE ENHANCEMENT FOR HANDWRITING & YELLOW PAGES ---
+            const imgData = cropCtx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
+            const data = imgData.data;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                // Get the Red, Green, and Blue values of the pixel
+                let r = data[i];
+                let g = data[i+1];
+                let b = data[i+2];
+                
+                // Convert to Grayscale
+                let v = (0.2126 * r + 0.7152 * g + 0.0722 * b);
+                
+                // Thresholding: If the pixel is dark (the ink), force it to pure black.
+                // If it's light (the yellow page), force it to pure white.
+                let threshold = 120; // Adjust this number if it's too dark/light
+                let finalColor = (v < threshold) ? 0 : 255;
+                
+                data[i] = finalColor;     // Red
+                data[i+1] = finalColor;   // Green
+                data[i+2] = finalColor;   // Blue
+            }
+            cropCtx.putImageData(imgData, 0, 0);
+            // --------------------------------------------------------
+
             try {
-                // Pass the cropped image data directly to Tesseract AI
+                // Tell Tesseract to look specifically for handwriting styles if possible
                 const result = await Tesseract.recognize(cropCanvas.toDataURL(), 'eng');
-                output.innerText = result.data.text.trim() || "[No text detected. Try drawing a tighter box.]";
+                output.innerText = result.data.text.trim() || "[Still couldn't read it. The handwriting might be too faint.]";
                 statusText.innerText = "Status: Extraction complete!";
             } catch (error) {
                 console.error(error);
